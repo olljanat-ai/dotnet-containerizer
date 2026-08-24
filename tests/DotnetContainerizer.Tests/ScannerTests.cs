@@ -95,4 +95,68 @@ public class ScannerTests
 
         Assert.Throws<DirectoryNotFoundException>(() => SolutionScanner.Scan(missing, includeTestProjects: false));
     }
+
+    [Fact]
+    public void Launch_settings_property_names_are_case_insensitive()
+    {
+        using var solution = new TestSolution()
+            .AddProject("Web/Web.csproj", TestSolution.WebProject())
+            .AddFile("Web/Properties/launchSettings.json", """
+                { "Profiles": { "web": { "CommandName": "Project", "ApplicationUrl": "https://localhost:7001" } } }
+                """);
+
+        var project = Assert.Single(SolutionScanner.Scan(solution.Root, false).Containerizable);
+        Assert.Equal(8081, project.HttpsPort);
+    }
+
+    [Fact]
+    public void Malformed_launch_settings_do_not_prevent_scanning()
+    {
+        using var solution = new TestSolution()
+            .AddProject("Web/Web.csproj", TestSolution.WebProject("net7.0"))
+            .AddFile("Web/Properties/launchSettings.json", "{ not json");
+
+        var project = Assert.Single(SolutionScanner.Scan(solution.Root, false).Containerizable);
+        Assert.Null(project.HttpsPort);
+    }
+
+    [Fact]
+    public void Scan_does_not_follow_directory_symbolic_links()
+    {
+        using var solution = new TestSolution()
+            .AddProject("src/App/App.csproj", TestSolution.ConsoleProject());
+        var link = solution.PathTo("src/App/recursive");
+
+        try
+        {
+            Directory.CreateSymbolicLink(link, solution.Root);
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        Assert.Single(SolutionScanner.Scan(solution.Root, false).Projects);
+    }
+
+    [Fact]
+    public void Scan_reads_xml_solution_paths_with_single_quotes()
+    {
+        using var solution = new TestSolution()
+            .AddFile("Example.slnx", "<Solution><Project Path='src/App/App.csproj' /></Solution>")
+            .AddProject("src/App/App.csproj", TestSolution.ConsoleProject());
+
+        Assert.Single(SolutionScanner.Scan(solution.Root, false).Containerizable);
+    }
+
+    [Fact]
+    public void Scan_reads_target_framework_from_directory_build_props()
+    {
+        using var solution = new TestSolution()
+            .AddFile("Directory.Build.props", "<Project><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>")
+            .AddProject("src/App/App.csproj", "<Project Sdk='Microsoft.NET.Sdk'><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+
+        var project = Assert.Single(SolutionScanner.Scan(solution.Root, false).Containerizable);
+        Assert.Equal("net9.0", project.TargetFramework);
+    }
 }

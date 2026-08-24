@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using DotnetContainerizer.Model;
 
 namespace DotnetContainerizer.Scanning;
@@ -113,11 +114,24 @@ internal static partial class SolutionScanner
             foreach (var subDirectory in subDirectories)
             {
                 var name = Path.GetFileName(subDirectory);
-                if (!IgnoredDirectories.Contains(name, StringComparer.OrdinalIgnoreCase))
+                if (!IgnoredDirectories.Contains(name, StringComparer.OrdinalIgnoreCase)
+                    && !IsReparsePoint(subDirectory))
                 {
                     pending.Push(subDirectory);
                 }
             }
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return true;
         }
     }
 
@@ -134,13 +148,31 @@ internal static partial class SolutionScanner
             yield break;
         }
 
-        var matches = solutionPath.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
-            ? SolutionXmlProjectRegex().Matches(content)
-            : SolutionProjectRegex().Matches(content);
-
-        foreach (Match match in matches)
+        IEnumerable<string> paths;
+        if (solutionPath.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
         {
-            var relative = match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar);
+            try
+            {
+                paths = XDocument.Parse(content).Descendants()
+                    .Where(static element => element.Name.LocalName == "Project")
+                    .Select(static element => element.Attribute("Path")?.Value)
+                    .OfType<string>()
+                    .ToList();
+            }
+            catch (System.Xml.XmlException)
+            {
+                yield break;
+            }
+        }
+        else
+        {
+            paths = SolutionProjectRegex().Matches(content).Cast<Match>()
+                .Select(static match => match.Groups["path"].Value);
+        }
+
+        foreach (var path in paths)
+        {
+            var relative = path.Replace('\\', Path.DirectorySeparatorChar);
             if (!ProjectExtensions.Contains(Path.GetExtension(relative), StringComparer.OrdinalIgnoreCase))
             {
                 continue;
@@ -157,6 +189,4 @@ internal static partial class SolutionScanner
     [GeneratedRegex("Project\\(\"\\{[^}]*\\}\"\\)\\s*=\\s*\"[^\"]*\",\\s*\"(?<path>[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex SolutionProjectRegex();
 
-    [GeneratedRegex("<Project\\s+Path=\"(?<path>[^\"]+)\"", RegexOptions.IgnoreCase)]
-    private static partial Regex SolutionXmlProjectRegex();
 }

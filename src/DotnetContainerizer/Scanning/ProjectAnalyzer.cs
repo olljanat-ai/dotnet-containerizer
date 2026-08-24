@@ -39,14 +39,15 @@ internal static partial class ProjectAnalyzer
             return Skip(projectPath, name, directory, relativePath, name, "not an SDK-style project");
         }
 
-        var properties = ReadProperties(root);
+        var properties = ReadInheritedProperties(directory);
+        MergeProperties(root, properties);
         var assemblyName = properties.GetValueOrDefault("AssemblyName") is { Length: > 0 } configured
             ? configured
             : name;
         var outputType = properties.GetValueOrDefault("OutputType");
         var packageReferences = root.Descendants()
             .Where(static element => element.Name.LocalName == "PackageReference")
-            .Select(static element => element.Attribute("Include")?.Value ?? string.Empty)
+            .Select(ItemIdentity)
             .ToList();
         var isTestProject = string.Equals(properties.GetValueOrDefault("IsTestProject"), "true", StringComparison.OrdinalIgnoreCase)
             || packageReferences.Any(static reference =>
@@ -54,7 +55,7 @@ internal static partial class ProjectAnalyzer
 
         var projectReferences = root.Descendants()
             .Where(static element => element.Name.LocalName == "ProjectReference")
-            .Select(element => element.Attribute("Include")?.Value)
+            .Select(ItemIdentity)
             .Where(static include => !string.IsNullOrWhiteSpace(include))
             .Select(include => Path.GetFullPath(Path.Combine(directory, include!.Replace('\\', Path.DirectorySeparatorChar))))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -152,9 +153,39 @@ internal static partial class ProjectAnalyzer
             SkipReason = reason,
         };
 
-    private static Dictionary<string, string> ReadProperties(XElement root)
+    private static Dictionary<string, string> ReadInheritedProperties(string projectDirectory)
     {
         var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var files = new Stack<string>();
+        for (var directory = new DirectoryInfo(projectDirectory); directory is not null; directory = directory.Parent)
+        {
+            var path = Path.Combine(directory.FullName, "Directory.Build.props");
+            if (File.Exists(path))
+            {
+                files.Push(path);
+            }
+        }
+
+        foreach (var file in files)
+        {
+            try
+            {
+                if (XDocument.Load(file).Root is { } root)
+                {
+                    MergeProperties(root, properties);
+                }
+            }
+            catch (Exception exception) when (exception is System.Xml.XmlException or IOException or UnauthorizedAccessException)
+            {
+                // MSBuild may still evaluate the project; ignore props files that cannot be inspected safely.
+            }
+        }
+
+        return properties;
+    }
+
+    private static void MergeProperties(XElement root, IDictionary<string, string> properties)
+    {
         foreach (var group in root.Elements().Where(static element => element.Name.LocalName == "PropertyGroup"))
         {
             // Conditional property groups are ignored, the unconditional values describe the default build.
@@ -169,7 +200,6 @@ internal static partial class ProjectAnalyzer
             }
         }
 
-        return properties;
     }
 
     private static List<string> ReadTargetFrameworks(IReadOnlyDictionary<string, string> properties)
@@ -182,6 +212,9 @@ internal static partial class ProjectAnalyzer
             .Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
     }
+
+    private static string ItemIdentity(XElement element) =>
+        element.Attribute("Include")?.Value ?? element.Attribute("Update")?.Value ?? string.Empty;
 
     /// <summary>Picks the newest .NET (Core) target framework a container image exists for.</summary>
     private static FrameworkTarget? SelectFramework(IEnumerable<string> monikers) => monikers
