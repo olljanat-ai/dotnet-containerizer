@@ -96,7 +96,7 @@ internal sealed class CliOptions
     public static bool TryParse(string[] args, TextWriter error, out CliOptions options)
     {
         options = new CliOptions();
-        var pathFromArgument = false;
+        var pathSpecified = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -110,12 +110,19 @@ internal sealed class CliOptions
                     options.ShowVersion = true;
                     break;
                 case "-p" or "--path":
+                    if (pathSpecified)
+                    {
+                        error.WriteLine("The scan path can only be specified once.");
+                        return false;
+                    }
+
                     if (!TryReadValue(args, ref i, error, out var path))
                     {
                         return false;
                     }
 
                     options.Path = path;
+                    pathSpecified = true;
                     break;
                 case "--os":
                     if (!TryReadValue(args, ref i, error, out var os))
@@ -219,14 +226,14 @@ internal sealed class CliOptions
                         return false;
                     }
 
-                    if (pathFromArgument)
+                    if (pathSpecified)
                     {
                         error.WriteLine($"Unexpected argument '{argument}'. Only one path can be given.");
                         return false;
                     }
 
                     options.Path = argument;
-                    pathFromArgument = true;
+                    pathSpecified = true;
                     break;
             }
         }
@@ -236,14 +243,20 @@ internal sealed class CliOptions
 
     private static bool TryReadValue(string[] args, ref int index, TextWriter error, out string value)
     {
-        if (index + 1 >= args.Length)
+        if (index + 1 >= args.Length || args[index + 1].StartsWith('-'))
         {
             error.WriteLine($"Option '{args[index]}' needs a value.");
             value = string.Empty;
             return false;
         }
 
-        value = args[++index];
+        value = args[++index].Trim();
+        if (value.Length == 0)
+        {
+            error.WriteLine($"Option '{args[index - 1]}' needs a non-empty value.");
+            return false;
+        }
+
         return true;
     }
 }

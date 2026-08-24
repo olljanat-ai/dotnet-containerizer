@@ -58,5 +58,25 @@ public class CliOptionsTests
     public void Two_paths_are_rejected()
     {
         Assert.False(CliOptions.TryParse(["one", "two"], TextWriter.Null, out _));
+        Assert.False(CliOptions.TryParse(["--path", "one", "two"], TextWriter.Null, out _));
+        Assert.False(CliOptions.TryParse(["one", "--path", "two"], TextWriter.Null, out _));
+    }
+
+    [Fact]
+    public void Option_cannot_consume_the_next_switch_as_its_value()
+    {
+        var error = new StringWriter();
+
+        Assert.False(CliOptions.TryParse(["--registry", "--force"], error, out _));
+        Assert.Contains("needs a value", error.ToString());
+    }
+
+    [Fact]
+    public void Option_values_are_trimmed_and_cannot_be_empty()
+    {
+        Assert.True(CliOptions.TryParse(["--registry", " registry.example "], TextWriter.Null, out var options));
+        Assert.Equal("registry.example", options.Registry);
+
+        Assert.False(CliOptions.TryParse(["--registry", "  "], TextWriter.Null, out _));
     }
 }

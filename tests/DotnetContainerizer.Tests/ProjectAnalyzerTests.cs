@@ -5,6 +5,20 @@ namespace DotnetContainerizer.Tests;
 
 public class ProjectAnalyzerTests
 {
+    [Fact]
+    public void Test_package_references_using_update_are_recognized()
+    {
+        using var solution = new TestSolution().AddProject("Tests/Tests.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+              <ItemGroup><PackageReference Update="Microsoft.NET.Test.Sdk" Version="17.12.0" /></ItemGroup>
+            </Project>
+            """);
+
+        var project = ProjectAnalyzer.Analyze(solution.PathTo("Tests/Tests.csproj"), solution.Root);
+        Assert.True(project.IsTestProject);
+    }
+
     [Theory]
     [InlineData("net8.0", 8)]
     [InlineData("net9.0", 9)]
@@ -160,8 +174,19 @@ public class ProjectAnalyzerTests
     [InlineData("Contoso.Web.API", "contoso-web-api")]
     [InlineData("OrderProcessor", "order-processor")]
     [InlineData("My_App 2", "my-app-2")]
+    [InlineData("Café.Api", "caf-api")]
     public void Component_names_are_dns_friendly(string projectName, string expected) =>
         Assert.Equal(expected, Naming.ToKebabCase(projectName));
+
+    [Fact]
+    public void Long_component_names_are_shortened_to_a_stable_dns_label()
+    {
+        var name = Naming.ToKebabCase(new string('a', 80));
+
+        Assert.Equal(63, name.Length);
+        Assert.Equal(name, Naming.ToKebabCase(new string('a', 80)));
+        Assert.NotEqual(name, Naming.ToKebabCase(new string('a', 79) + "b"));
+    }
 
     private static ProjectInfo Analyze(TestSolution solution, string relativePath) =>
         ProjectAnalyzer.Analyze(solution.PathTo(relativePath), solution.Root);
