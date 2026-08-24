@@ -24,6 +24,7 @@ internal static class HelmChartGenerator
         yield return new GeneratedFile(Path.Combine(root, "templates", "deployment.yaml"), Deployment);
         yield return new GeneratedFile(Path.Combine(root, "templates", "service.yaml"), Service);
         yield return new GeneratedFile(Path.Combine(root, "templates", "ingress.yaml"), Ingress);
+        yield return new GeneratedFile(Path.Combine(root, "templates", "networkpolicy.yaml"), NetworkPolicy);
         yield return new GeneratedFile(Path.Combine(root, "templates", "NOTES.txt"), Notes);
     }
 
@@ -41,6 +42,8 @@ internal static class HelmChartGenerator
         appVersion: "latest"
 
         """;
+
+    private static string Boolean(bool value) => value ? "true" : "false";
 
     private static string ValuesYaml(ScanResult scan, GenerationSettings settings)
     {
@@ -67,19 +70,45 @@ internal static class HelmChartGenerator
         builder.AppendLine("  create: true");
         builder.AppendLine("  name: \"\"");
         builder.AppendLine("  annotations: {}");
+        if (settings.Hardened)
+        {
+            builder.AppendLine("  # The components do not talk to the Kubernetes API, so they get no token.");
+        }
+
+        builder.AppendLine($"  automountServiceAccountToken: {Boolean(!settings.Hardened)}");
         builder.AppendLine();
         builder.AppendLine("podAnnotations: {}");
         builder.AppendLine("podLabels: {}");
         builder.AppendLine();
+        builder.AppendLine("# Pod level hardening, applies to every component.");
         builder.AppendLine("podSecurityContext:");
         builder.AppendLine("  runAsNonRoot: true");
+        if (settings.Hardened)
+        {
+            builder.AppendLine("  seccompProfile:");
+            builder.AppendLine("    type: RuntimeDefault");
+        }
+
         builder.AppendLine();
+        builder.AppendLine("# Container level hardening, applies to every component.");
         builder.AppendLine("securityContext:");
         builder.AppendLine("  allowPrivilegeEscalation: false");
-        builder.AppendLine("  readOnlyRootFilesystem: false");
+        builder.AppendLine("  privileged: false");
+        if (settings.Hardened)
+        {
+            builder.AppendLine("  # /tmp is mounted as an emptyDir so the app still has somewhere to write.");
+        }
+
+        builder.AppendLine($"  readOnlyRootFilesystem: {Boolean(settings.Hardened)}");
         builder.AppendLine("  capabilities:");
         builder.AppendLine("    drop:");
         builder.AppendLine("      - ALL");
+        builder.AppendLine();
+        builder.AppendLine("# Denies traffic that does not come from the ingress controller or the release itself.");
+        builder.AppendLine("# Off by default because it needs a CNI plugin that enforces network policies.");
+        builder.AppendLine("networkPolicy:");
+        builder.AppendLine("  enabled: false");
+        builder.AppendLine("  ingressNamespace: ingress-nginx");
         builder.AppendLine();
         builder.AppendLine("nodeSelector: {}");
         builder.AppendLine("tolerations: []");
@@ -89,15 +118,16 @@ internal static class HelmChartGenerator
 
         foreach (var project in scan.Containerizable)
         {
-            AppendComponent(builder, project);
+            AppendComponent(builder, project, settings);
         }
 
         return builder.ToString();
     }
 
-    private static void AppendComponent(StringBuilder builder, ProjectInfo project)
+    private static void AppendComponent(StringBuilder builder, ProjectInfo project, GenerationSettings settings)
     {
         var isWeb = project.Kind == ContainerKind.AspNet;
+        var httpPort = ContainerPorts.Http(project, settings.Hardened);
         builder.AppendLine($"  # {project.Name} ({(isWeb ? "ASP.NET Core" : "console/worker")}, {project.TargetFramework})");
         builder.AppendLine($"  {project.ComponentName}:");
         builder.AppendLine("    enabled: true");
@@ -112,10 +142,11 @@ internal static class HelmChartGenerator
         {
             builder.AppendLine("      - name: ASPNETCORE_ENVIRONMENT");
             builder.AppendLine("        value: Production");
-            builder.AppendLine($"      - name: ASPNETCORE_HTTP_PORTS");
-            builder.AppendLine($"        value: \"{project.HttpPort}\"");
+            var portVariable = ContainerPorts.UrlEnvironmentVariable(project, settings.Hardened);
+            builder.AppendLine($"      - name: {portVariable?.Name ?? "ASPNETCORE_HTTP_PORTS"}");
+            builder.AppendLine($"        value: \"{portVariable?.Value ?? httpPort?.ToString()}\"");
             builder.AppendLine("    envFrom: []");
-            builder.AppendLine($"    containerPort: {project.HttpPort}");
+            builder.AppendLine($"    containerPort: {httpPort}");
             builder.AppendLine("    service:");
             builder.AppendLine("      enabled: true");
             builder.AppendLine("      type: ClusterIP");
@@ -269,6 +300,7 @@ internal static class HelmChartGenerator
           annotations:
             {{- toYaml . | nindent 4 }}
           {{- end }}
+        automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default false }}
         {{- end }}
 
         """;
@@ -307,6 +339,7 @@ internal static class HelmChartGenerator
                 {{- toYaml . | nindent 8 }}
               {{- end }}
               serviceAccountName: {{ include "solution.serviceAccountName" $root }}
+              automountServiceAccountToken: {{ $root.Values.serviceAccount.automountServiceAccountToken | default false }}
               {{- with $root.Values.podSecurityContext }}
               securityContext:
                 {{- toYaml . | nindent 8 }}
@@ -351,13 +384,26 @@ internal static class HelmChartGenerator
                   resources:
                     {{- toYaml . | nindent 12 }}
                   {{- end }}
-                  {{- with $component.volumeMounts }}
+                  {{- if or $root.Values.securityContext.readOnlyRootFilesystem $component.volumeMounts }}
                   volumeMounts:
+                    {{- if $root.Values.securityContext.readOnlyRootFilesystem }}
+                    {{/* .NET writes temporary files, so a writable /tmp is needed. */}}
+                    - name: tmp
+                      mountPath: /tmp
+                    {{- end }}
+                    {{- with $component.volumeMounts }}
                     {{- toYaml . | nindent 12 }}
+                    {{- end }}
                   {{- end }}
-              {{- with $component.volumes }}
+              {{- if or $root.Values.securityContext.readOnlyRootFilesystem $component.volumes }}
               volumes:
+                {{- if $root.Values.securityContext.readOnlyRootFilesystem }}
+                - name: tmp
+                  emptyDir: {}
+                {{- end }}
+                {{- with $component.volumes }}
                 {{- toYaml . | nindent 8 }}
+                {{- end }}
               {{- end }}
               {{- with $root.Values.nodeSelector }}
               nodeSelector:
@@ -445,6 +491,50 @@ internal static class HelmChartGenerator
                           number: {{ $component.service.port | default 80 }}
                   {{- end }}
             {{- end }}
+        {{- end }}
+        {{- end }}
+
+        """;
+
+    private const string NetworkPolicy = """
+        {{/* Generated by dotnet-containerize. Opt in, it needs a CNI plugin that enforces policies. */}}
+        {{- $root := . -}}
+        {{- if .Values.networkPolicy.enabled }}
+        {{- range $name, $component := .Values.components }}
+        {{- if $component.enabled }}
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: {{ include "solution.componentName" (dict "root" $root "name" $name) }}
+          labels:
+            {{- include "solution.labels" (dict "root" $root "name" $name) | nindent 4 }}
+        spec:
+          podSelector:
+            matchLabels:
+              {{- include "solution.selectorLabels" (dict "root" $root "name" $name) | nindent 6 }}
+          policyTypes:
+            - Ingress
+          ingress:
+            {{- if and $component.service $component.service.enabled }}
+            {{/* Pods of this release and the ingress controller may reach the component. */}}
+            - from:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/instance: {{ $root.Release.Name }}
+                {{- with $root.Values.networkPolicy.ingressNamespace }}
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: {{ . }}
+                {{- end }}
+              ports:
+                - port: {{ $component.containerPort | default 8080 }}
+                  protocol: TCP
+            {{- else }}
+            {{/* Workers accept no inbound traffic at all. */}}
+            []
+            {{- end }}
+        {{- end }}
         {{- end }}
         {{- end }}
 

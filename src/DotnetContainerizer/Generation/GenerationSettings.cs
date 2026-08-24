@@ -24,6 +24,12 @@ internal sealed class GenerationSettings
     /// <summary>Whether the pipeline should contain a Helm deploy stage.</summary>
     public bool IncludeHelm { get; init; } = true;
 
+    /// <summary>
+    /// Whether the generated assets are hardened: a non root user in every image, a read only root
+    /// filesystem, dropped capabilities and a vulnerable package check in the pipeline. On by default.
+    /// </summary>
+    public bool Hardened { get; init; } = true;
+
     public ContainerOs Os { get; init; } = ContainerOs.Linux;
 
     /// <summary>Build agent image used by the generated pipeline jobs.</summary>

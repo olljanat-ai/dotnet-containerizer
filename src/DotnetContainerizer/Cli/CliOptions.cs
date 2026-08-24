@@ -32,6 +32,9 @@ internal sealed class CliOptions
 
     public bool NoHelm { get; private set; }
 
+    /// <summary>Turns off the security hardening that is applied by default.</summary>
+    public bool NoHardening { get; private set; }
+
     /// <summary>Helm chart name. Defaults to the solution name when not given.</summary>
     public string? ChartName { get; private set; }
 
@@ -72,6 +75,8 @@ internal sealed class CliOptions
               --kubernetes-connection <name>
                                    Azure DevOps Kubernetes service connection. Default: aks-service-connection.
               --no-helm            Do not generate the Helm chart.
+              --no-hardening       Do not apply the security hardening defaults (non root user,
+                                   read only root filesystem, dropped capabilities, package audit).
           -f, --force              Overwrite files that already exist.
               --dry-run            Report what would be written without touching the disk.
           -l, --list               Only list the discovered projects.
@@ -167,6 +172,9 @@ internal sealed class CliOptions
                     break;
                 case "--no-helm":
                     options.NoHelm = true;
+                    break;
+                case "--no-hardening":
+                    options.NoHardening = true;
                     break;
                 case "--chart-name":
                     if (!TryReadValue(args, ref i, error, out var chartName))

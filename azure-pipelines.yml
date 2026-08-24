@@ -40,6 +40,15 @@ steps:
       arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
       publishTestResults: true
 
+  - bash: |
+      set -euo pipefail
+      dotnet list DotnetContainerizer.sln package --vulnerable --include-transitive | tee audit.log
+      if grep -q 'has the following vulnerable packages' audit.log; then
+        echo 'Vulnerable NuGet packages found.'
+        exit 1
+      fi
+    displayName: Audit NuGet packages for known vulnerabilities
+
   - task: DotNetCoreCLI@2
     displayName: dotnet pack
     inputs:

@@ -5,6 +5,16 @@ namespace DotnetContainerizer.Tests;
 
 public class DockerfileGeneratorTests
 {
+    private static GenerationSettings Settings(bool hardened = true, ContainerOs os = ContainerOs.Linux) => new()
+    {
+        Registry = "contoso.azurecr.io",
+        ServiceConnection = "contoso-acr",
+        ImagePrefix = "contoso",
+        ChartName = "contoso",
+        Hardened = hardened,
+        Os = os,
+    };
+
     [Fact]
     public void Web_project_gets_an_aspnet_dockerfile()
     {
@@ -14,7 +24,7 @@ public class DockerfileGeneratorTests
             .AddFile("src/Contoso.Api/Properties/launchSettings.json", TestSolution.HttpsLaunchSettings);
 
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
-        var dockerfile = DockerfileGenerator.Generate(scan.Containerizable[0], scan, ContainerOs.Linux);
+        var dockerfile = DockerfileGenerator.Generate(scan.Containerizable[0], scan, Settings());
 
         Assert.Equal(Path.Combine(solution.Root, "src", "Contoso.Api", "Dockerfile"), dockerfile.Path);
         Assert.Contains("FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base", dockerfile.Content);
@@ -35,7 +45,7 @@ public class DockerfileGeneratorTests
             .AddProject("src/Contoso.Worker/Contoso.Worker.csproj", TestSolution.WorkerProject());
 
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
-        var dockerfile = DockerfileGenerator.Generate(scan.Containerizable[0], scan, ContainerOs.Linux);
+        var dockerfile = DockerfileGenerator.Generate(scan.Containerizable[0], scan, Settings());
 
         Assert.Contains("FROM mcr.microsoft.com/dotnet/runtime:8.0 AS base", dockerfile.Content);
         Assert.DoesNotContain("EXPOSE", dockerfile.Content);
@@ -58,7 +68,7 @@ public class DockerfileGeneratorTests
             .AddProject("src/Core/Core.csproj", TestSolution.LibraryProject());
 
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
-        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, ContainerOs.Linux).Content;
+        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, Settings()).Content;
 
         Assert.Contains("COPY [\"src/Core/Core.csproj\", \"src/Core/\"]", content);
         Assert.True(
@@ -74,7 +84,7 @@ public class DockerfileGeneratorTests
             .AddProject("src/Api/Api.csproj", TestSolution.WebProject());
 
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
-        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, ContainerOs.Windows).Content;
+        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, Settings(os: ContainerOs.Windows)).Content;
 
         Assert.Contains("FROM mcr.microsoft.com/dotnet/aspnet:8.0-nanoserver-ltsc2022 AS base", content);
         Assert.Contains("FROM mcr.microsoft.com/dotnet/sdk:8.0-nanoserver-ltsc2022 AS build", content);
@@ -88,7 +98,7 @@ public class DockerfileGeneratorTests
             .AddProject("src/Api/Api.csproj", TestSolution.WebProject("net6.0"));
 
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
-        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, ContainerOs.Linux).Content;
+        var content = DockerfileGenerator.Generate(scan.Containerizable[0], scan, Settings()).Content;
 
         Assert.Contains("FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS base", content);
         Assert.Contains("EXPOSE 80", content);

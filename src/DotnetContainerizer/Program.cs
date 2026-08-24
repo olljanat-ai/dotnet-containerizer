@@ -68,6 +68,7 @@ internal static class Program
             KubernetesServiceConnection = options.KubernetesServiceConnection,
             Namespace = options.Namespace,
             IncludeHelm = !options.NoHelm,
+            Hardened = !options.NoHardening,
             Os = options.Os,
         };
 
@@ -79,7 +80,7 @@ internal static class Program
         {
             foreach (var project in scan.Containerizable)
             {
-                skipped += Write(writer, DockerfileGenerator.Generate(project, scan, options.Os), scan);
+                skipped += Write(writer, DockerfileGenerator.Generate(project, scan, settings), scan);
             }
 
             skipped += Write(writer, DockerIgnoreGenerator.Generate(scan), scan);

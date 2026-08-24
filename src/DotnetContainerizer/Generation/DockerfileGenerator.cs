@@ -12,10 +12,18 @@ internal static class DockerfileGenerator
 {
     private const string WindowsTagSuffix = "-nanoserver-ltsc2022";
 
-    public static GeneratedFile Generate(ProjectInfo project, ScanResult scan, ContainerOs os)
+    /// <summary>Matches the uid the .NET 8+ base images use for $APP_UID.</summary>
+    private const int LegacyUserId = 1654;
+
+    private const string LegacyUserName = "app";
+
+    public static GeneratedFile Generate(ProjectInfo project, ScanResult scan, GenerationSettings settings)
     {
         ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(settings);
 
+        var os = settings.Os;
+        var hardened = settings.Hardened;
         var version = project.FrameworkVersion
             ?? throw new InvalidOperationException($"Project '{project.Name}' has no supported target framework.");
         var suffix = os == ContainerOs.Windows ? WindowsTagSuffix : string.Empty;
@@ -31,19 +39,20 @@ internal static class DockerfileGenerator
         builder.AppendLine();
 
         builder.AppendLine($"FROM mcr.microsoft.com/dotnet/{runtimeImage}:{version}{suffix} AS base");
-        if (os == ContainerOs.Linux && project.FrameworkMajorVersion >= 8)
+        builder.AppendLine("WORKDIR /app");
+        AppendNonRootUser(builder, project, os, hardened);
+
+        if (ContainerPorts.UrlEnvironmentVariable(project, hardened) is { } environmentVariable)
         {
-            // $APP_UID is defined by the .NET 8+ base images and runs the app as a non root user.
-            builder.AppendLine("USER $APP_UID");
+            builder.AppendLine($"ENV {environmentVariable.Name}={environmentVariable.Value}");
         }
 
-        builder.AppendLine("WORKDIR /app");
-        if (project.HttpPort is { } httpPort)
+        if (ContainerPorts.Http(project, hardened) is { } httpPort)
         {
             builder.AppendLine($"EXPOSE {httpPort}");
         }
 
-        if (project.HttpsPort is { } httpsPort)
+        if (ContainerPorts.Https(project, hardened) is { } httpsPort)
         {
             builder.AppendLine($"EXPOSE {httpsPort}");
         }
@@ -72,6 +81,41 @@ internal static class DockerfileGenerator
         builder.AppendLine($"ENTRYPOINT [\"dotnet\", \"{project.AssemblyName}.dll\"]");
 
         return new GeneratedFile(DockerfilePath(project), builder.ToString());
+    }
+
+    /// <summary>
+    /// Makes the image run as a non root user. From .NET 8 on the base images define $APP_UID for
+    /// exactly this, older Linux images run as root and need an account of their own. Windows images
+    /// ship the unprivileged ContainerUser account.
+    /// </summary>
+    private static void AppendNonRootUser(StringBuilder builder, ProjectInfo project, ContainerOs os, bool hardened)
+    {
+        if (os == ContainerOs.Windows)
+        {
+            if (hardened)
+            {
+                builder.AppendLine("USER ContainerUser");
+            }
+
+            return;
+        }
+
+        if (project.FrameworkMajorVersion >= 8)
+        {
+            // $APP_UID is defined by the .NET 8+ base images and runs the app as a non root user.
+            builder.AppendLine("USER $APP_UID");
+            return;
+        }
+
+        if (!hardened)
+        {
+            return;
+        }
+
+        builder.AppendLine("# The .NET 7 and older base images run as root, so create an account to run as.");
+        builder.AppendLine($"RUN adduser --system --uid {LegacyUserId} --group --no-create-home {LegacyUserName} \\");
+        builder.AppendLine($"    && chown -R {LegacyUserName}:{LegacyUserName} /app");
+        builder.AppendLine($"USER {LegacyUserName}");
     }
 
     /// <summary>Visual Studio puts the Dockerfile next to the project file.</summary>

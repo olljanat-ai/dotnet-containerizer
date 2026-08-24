@@ -30,20 +30,40 @@ The scanner reads every `*.sln`, `*.slnx`, `*.csproj`, `*.fsproj` and `*.vbproj`
 | `Microsoft.NET.Sdk.Worker`, or `OutputType` of `Exe` | `mcr.microsoft.com/dotnet/runtime` image |
 | Class library, test project, Blazor WebAssembly, WinExe, .NET Framework | skipped, with the reason printed |
 
-Ports follow the Visual Studio defaults: .NET 8 and newer run as `$APP_UID` and listen on `8080`
-(plus `8081` when the project has an HTTPS launch profile), older versions listen on `80` and `443`.
-Multi targeted projects are containerized for their newest target framework.
+Multi targeted projects are containerized for their newest target framework, and every project keeps the
+base image of its own framework version, so a solution that mixes .NET 6, 8 and 10 needs no switches.
 
 The build context is the solution folder when exactly one solution file is found, otherwise the scanned
 folder. Project references are copied into the image before `dotnet restore` runs, so the restore stays
 in its own cached layer.
+
+## Security hardening
+
+Hardening is applied by default, `--no-hardening` falls back to the plain Visual Studio output:
+
+| | Hardened (default) | `--no-hardening` |
+| --- | --- | --- |
+| Image user | Non root on every version: `$APP_UID` from .NET 8, a created `app` account before that, `ContainerUser` on Windows | `$APP_UID` from .NET 8, root before that |
+| HTTP port | `8080` on every version, a non root user cannot bind port 80 | `8080` from .NET 8, `80` before that |
+| Root filesystem | `readOnlyRootFilesystem: true` with an emptyDir mounted on `/tmp` | writable |
+| Pod | `seccompProfile: RuntimeDefault`, no service account token mounted | defaults |
+| Pipeline | Fails on a NuGet package with a known vulnerability | no audit |
+
+`runAsNonRoot`, `allowPrivilegeEscalation: false`, `privileged: false` and dropping all capabilities apply
+either way, they cost nothing and no .NET workload needs them off.
+
+A `NetworkPolicy` template is generated but left `enabled: false`: it is only enforced by clusters whose
+CNI plugin supports it, so switching it on is the cluster owner's call. Once enabled, web components accept
+traffic from the release and the ingress namespace, workers accept none.
 
 ## The generated Azure DevOps pipeline
 
 `azure-pipelines.yml` builds one container image per containerizable project and pushes it to Azure
 Container Registry through the `Docker@2` task. Pull request builds only build the images, builds of the
 default branch build and push them tagged with `$(Build.BuildNumber)` and `latest`. When the solution
-contains test projects, a `dotnet test` job runs first and the image jobs depend on it. A second stage
+contains test projects or hardening is on, a `Validate` job runs first — installing one SDK per framework
+version in the solution, running `dotnet test`, and failing the build on packages with known
+vulnerabilities — and the image jobs depend on it. A second stage
 deploys the Helm chart with `helm upgrade --install` through a Kubernetes service connection, using the
 tag that was just built.
 
@@ -75,6 +95,7 @@ helm/contoso
     ├── deployment.yaml     # one Deployment per enabled component
     ├── service.yaml        # one Service per component that listens on a port
     ├── ingress.yaml        # one Ingress per component with ingress.enabled
+    ├── networkpolicy.yaml  # opt in, see Security hardening
     ├── serviceaccount.yaml
     └── NOTES.txt
 ```
@@ -124,6 +145,7 @@ Validate a generated chart with `helm lint helm/contoso` and `helm template cont
 | `--namespace <name>` | Kubernetes namespace to deploy into. Default: `default` |
 | `--kubernetes-connection <name>` | Kubernetes service connection name. Default: `aks-service-connection` |
 | `--no-helm` | Do not generate the Helm chart |
+| `--no-hardening` | Keep the plain Visual Studio defaults instead of the hardened ones |
 | `-f`, `--force` | Overwrite files that already exist |
 | `--dry-run` | Report what would be written without touching the disk |
 | `-l`, `--list` | Only list the discovered projects |
@@ -179,6 +201,7 @@ created    helm/contoso/templates/serviceaccount.yaml
 created    helm/contoso/templates/deployment.yaml
 created    helm/contoso/templates/service.yaml
 created    helm/contoso/templates/ingress.yaml
+created    helm/contoso/templates/networkpolicy.yaml
 created    helm/contoso/templates/NOTES.txt
 ```
 

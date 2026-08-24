@@ -46,9 +46,10 @@ public class AzurePipelineGeneratorTests
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
         var pipeline = Single(AzurePipelineGenerator.Generate(scan, Settings), AzurePipelineGenerator.PipelineFileName);
 
-        Assert.Contains("- job: Test", pipeline.Content);
+        Assert.Contains("- job: Validate", pipeline.Content);
+        Assert.Contains("displayName: dotnet test", pipeline.Content);
         Assert.Contains("projects: 'Contoso.sln'", pipeline.Content);
-        Assert.Contains("dependsOn:\n            - Test", pipeline.Content.Replace("\r\n", "\n"));
+        Assert.Contains("dependsOn:\n            - Validate", pipeline.Content.Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -93,7 +94,7 @@ public class AzurePipelineGeneratorTests
     }
 
     [Fact]
-    public void Pipeline_without_test_projects_has_no_test_job()
+    public void Pipeline_without_test_projects_runs_no_test_step()
     {
         using var solution = new TestSolution()
             .AddProject("src/Contoso.Api/Contoso.Api.csproj", TestSolution.WebProject());
@@ -101,8 +102,32 @@ public class AzurePipelineGeneratorTests
         var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
         var pipeline = Single(AzurePipelineGenerator.Generate(scan, Settings), AzurePipelineGenerator.PipelineFileName);
 
-        Assert.DoesNotContain("- job: Test", pipeline.Content);
-        Assert.DoesNotContain("dependsOn:\n            - Test", pipeline.Content.Replace("\r\n", "\n"));
+        Assert.DoesNotContain("displayName: dotnet test", pipeline.Content);
+
+        // The validate job stays, the hardened pipeline still audits the packages there.
+        Assert.Contains("- job: Validate", pipeline.Content);
+    }
+
+    [Fact]
+    public void Pipeline_without_tests_or_hardening_goes_straight_to_the_images()
+    {
+        using var solution = new TestSolution()
+            .AddProject("src/Contoso.Api/Contoso.Api.csproj", TestSolution.WebProject());
+
+        var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
+        var settings = new GenerationSettings
+        {
+            Registry = Settings.Registry,
+            ServiceConnection = Settings.ServiceConnection,
+            ImagePrefix = Settings.ImagePrefix,
+            ChartName = Settings.ChartName,
+            Hardened = false,
+        };
+
+        var pipeline = Single(AzurePipelineGenerator.Generate(scan, settings), AzurePipelineGenerator.PipelineFileName);
+
+        Assert.DoesNotContain("- job: Validate", pipeline.Content);
+        Assert.DoesNotContain("dependsOn:\n            - Validate", pipeline.Content.Replace("\r\n", "\n"));
     }
 
     [Fact]
