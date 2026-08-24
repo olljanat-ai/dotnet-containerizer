@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DotnetContainerizer</RootNamespace>
+    <AssemblyName>dotnet-containerize</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-containerize</ToolCommandName>
+    <PackageId>DotnetContainerizer</PackageId>
+    <Description>Generates Dockerfiles, Azure DevOps pipelines and a Helm chart for existing .NET solutions.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DotnetContainerizer.Tests" />
+  </ItemGroup>
+
+</Project>
