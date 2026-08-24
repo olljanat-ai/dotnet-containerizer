@@ -17,6 +17,19 @@ internal sealed class CliOptions
 
     public bool ListOnly { get; private set; }
 
+    /// <summary>Login server of the Azure Container Registry used in the generated pipeline.</summary>
+    public string Registry { get; private set; } = "myregistry.azurecr.io";
+
+    /// <summary>Name of the Azure DevOps Docker registry service connection.</summary>
+    public string ServiceConnection { get; private set; } = "acr-service-connection";
+
+    /// <summary>Image repository prefix. Defaults to the solution name when not given.</summary>
+    public string? ImagePrefix { get; private set; }
+
+    public bool NoDockerfile { get; private set; }
+
+    public bool NoPipeline { get; private set; }
+
     public bool Verbose { get; private set; }
 
     public bool ShowHelp { get; private set; }
@@ -36,6 +49,13 @@ internal sealed class CliOptions
           -p, --path <folder>      Same as the path argument.
               --os <linux|windows> Container operating system. Default: linux.
               --include-tests      Generate container assets for test projects as well.
+              --registry <server>  ACR login server for the pipeline. Default: myregistry.azurecr.io.
+              --service-connection <name>
+                                   Azure DevOps Docker registry service connection. Default: acr-service-connection.
+              --image-prefix <name>
+                                   Image repository prefix. Default: the solution name.
+              --no-dockerfile      Do not generate Dockerfiles.
+              --no-pipeline        Do not generate the Azure DevOps pipeline.
           -f, --force              Overwrite files that already exist.
               --dry-run            Report what would be written without touching the disk.
           -l, --list               Only list the discovered projects.
@@ -47,6 +67,7 @@ internal sealed class CliOptions
           dotnet-containerize
           dotnet-containerize ./src --dry-run
           dotnet-containerize --force --os windows
+          dotnet-containerize --registry contoso.azurecr.io --image-prefix contoso
 
         """;
 
@@ -97,6 +118,36 @@ internal sealed class CliOptions
                     break;
                 case "--include-tests":
                     options.IncludeTests = true;
+                    break;
+                case "--registry":
+                    if (!TryReadValue(args, ref i, error, out var registry))
+                    {
+                        return false;
+                    }
+
+                    options.Registry = registry;
+                    break;
+                case "--service-connection":
+                    if (!TryReadValue(args, ref i, error, out var serviceConnection))
+                    {
+                        return false;
+                    }
+
+                    options.ServiceConnection = serviceConnection;
+                    break;
+                case "--image-prefix":
+                    if (!TryReadValue(args, ref i, error, out var imagePrefix))
+                    {
+                        return false;
+                    }
+
+                    options.ImagePrefix = imagePrefix;
+                    break;
+                case "--no-dockerfile":
+                    options.NoDockerfile = true;
+                    break;
+                case "--no-pipeline":
+                    options.NoPipeline = true;
                     break;
                 case "-f" or "--force":
                     options.Force = true;

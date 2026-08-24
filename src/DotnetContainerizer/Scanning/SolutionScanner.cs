@@ -58,12 +58,31 @@ internal static partial class SolutionScanner
         {
             RootPath = root,
             ContextRoot = contextRoot,
+            RepositoryRoot = FindRepositoryRoot(contextRoot),
             SolutionPaths = solutions,
             Projects = projects,
             Containerizable = projects
                 .Where(project => project.IsContainerizable && (includeTestProjects || !project.IsTestProject))
                 .ToList(),
         };
+    }
+
+    /// <summary>Walks up from <paramref name="contextRoot"/> looking for the folder that holds .git.</summary>
+    private static string FindRepositoryRoot(string contextRoot)
+    {
+        var directory = new DirectoryInfo(contextRoot);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, ".git"))
+                || File.Exists(Path.Combine(directory.FullName, ".git")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return contextRoot;
     }
 
     private static IEnumerable<string> EnumerateFiles(string root)

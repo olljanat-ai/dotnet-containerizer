@@ -59,16 +59,35 @@ internal static class Program
             return 0;
         }
 
+        var settings = new GenerationSettings
+        {
+            Registry = options.Registry,
+            ServiceConnection = options.ServiceConnection,
+            ImagePrefix = options.ImagePrefix is { Length: > 0 } prefix ? prefix : Naming.ToKebabCase(scan.Name),
+            Os = options.Os,
+        };
+
         var writer = new FileWriter(options.Force, options.DryRun);
         var skipped = 0;
 
         Console.WriteLine();
-        foreach (var project in scan.Containerizable)
+        if (!options.NoDockerfile)
         {
-            skipped += Write(writer, DockerfileGenerator.Generate(project, scan, options.Os), scan);
+            foreach (var project in scan.Containerizable)
+            {
+                skipped += Write(writer, DockerfileGenerator.Generate(project, scan, options.Os), scan);
+            }
+
+            skipped += Write(writer, DockerIgnoreGenerator.Generate(scan), scan);
         }
 
-        skipped += Write(writer, DockerIgnoreGenerator.Generate(scan), scan);
+        if (!options.NoPipeline)
+        {
+            foreach (var file in AzurePipelineGenerator.Generate(scan, settings))
+            {
+                skipped += Write(writer, file, scan);
+            }
+        }
 
         if (skipped > 0)
         {

@@ -11,6 +11,12 @@ internal sealed class ScanResult
     /// </summary>
     public required string ContextRoot { get; init; }
 
+    /// <summary>
+    /// Root of the source repository, used for pipeline and chart paths. This is the closest folder
+    /// with a <c>.git</c> directory at or above the build context, otherwise the build context itself.
+    /// </summary>
+    public required string RepositoryRoot { get; init; }
+
     /// <summary>Solution files found while scanning, in discovery order.</summary>
     public required IReadOnlyList<string> SolutionPaths { get; init; }
 

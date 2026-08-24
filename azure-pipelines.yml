@@ -1,0 +1,55 @@
+# Azure DevOps pipeline for the dotnet-containerizer tool itself.
+# The pipelines this tool generates for your own solutions look different, see the README.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '8.0.x'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  - task: UseDotNet@2
+    displayName: Install the .NET SDK
+    inputs:
+      packageType: sdk
+      version: $(dotnetVersion)
+
+  - task: DotNetCoreCLI@2
+    displayName: dotnet build
+    inputs:
+      command: build
+      projects: 'DotnetContainerizer.sln'
+      arguments: '--configuration $(buildConfiguration)'
+
+  - task: DotNetCoreCLI@2
+    displayName: dotnet test
+    inputs:
+      command: test
+      projects: 'DotnetContainerizer.sln'
+      arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
+      publishTestResults: true
+
+  - task: DotNetCoreCLI@2
+    displayName: dotnet pack
+    inputs:
+      command: pack
+      packagesToPack: 'src/DotnetContainerizer/DotnetContainerizer.csproj'
+      configuration: $(buildConfiguration)
+      versioningScheme: byBuildNumber
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish the tool package
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)
+      artifact: nupkg
