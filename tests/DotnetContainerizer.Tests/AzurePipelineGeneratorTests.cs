@@ -10,6 +10,7 @@ public class AzurePipelineGeneratorTests
         Registry = "contoso.azurecr.io",
         ServiceConnection = "contoso-acr",
         ImagePrefix = "contoso",
+        ChartName = "contoso",
     };
 
     [Fact]
@@ -51,6 +52,47 @@ public class AzurePipelineGeneratorTests
     }
 
     [Fact]
+    public void Pipeline_deploys_the_chart_after_the_images_are_pushed()
+    {
+        using var solution = new TestSolution()
+            .AddProject("src/Contoso.Api/Contoso.Api.csproj", TestSolution.WebProject());
+
+        var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
+        var files = AzurePipelineGenerator.Generate(scan, Settings).ToList();
+        var pipeline = Single(files, AzurePipelineGenerator.PipelineFileName);
+        var deploy = Single(files, AzurePipelineGenerator.DeployTemplateFileName);
+
+        Assert.Contains("- stage: Deploy", pipeline.Content);
+        Assert.Contains("dependsOn: Build", pipeline.Content);
+        Assert.Contains("helmChartPath: 'helm/contoso'", pipeline.Content);
+        Assert.Contains("kubernetesServiceConnection: 'aks-service-connection'", pipeline.Content);
+        Assert.Contains("command: upgrade", deploy.Content);
+        Assert.Contains("--set image.tag=$(tag)", deploy.Content);
+    }
+
+    [Fact]
+    public void Pipeline_without_helm_has_no_deploy_stage()
+    {
+        using var solution = new TestSolution()
+            .AddProject("src/Contoso.Api/Contoso.Api.csproj", TestSolution.WebProject());
+
+        var scan = SolutionScanner.Scan(solution.Root, includeTestProjects: false);
+        var settings = new GenerationSettings
+        {
+            Registry = Settings.Registry,
+            ServiceConnection = Settings.ServiceConnection,
+            ImagePrefix = Settings.ImagePrefix,
+            ChartName = Settings.ChartName,
+            IncludeHelm = false,
+        };
+
+        var files = AzurePipelineGenerator.Generate(scan, settings).ToList();
+
+        Assert.Equal(2, files.Count);
+        Assert.DoesNotContain("- stage: Deploy", Single(files, AzurePipelineGenerator.PipelineFileName).Content);
+    }
+
+    [Fact]
     public void Pipeline_without_test_projects_has_no_test_job()
     {
         using var solution = new TestSolution()
@@ -60,7 +102,7 @@ public class AzurePipelineGeneratorTests
         var pipeline = Single(AzurePipelineGenerator.Generate(scan, Settings), AzurePipelineGenerator.PipelineFileName);
 
         Assert.DoesNotContain("- job: Test", pipeline.Content);
-        Assert.DoesNotContain("dependsOn", pipeline.Content);
+        Assert.DoesNotContain("dependsOn:\n            - Test", pipeline.Content.Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -109,6 +151,7 @@ public class AzurePipelineGeneratorTests
             Registry = Settings.Registry,
             ServiceConnection = Settings.ServiceConnection,
             ImagePrefix = Settings.ImagePrefix,
+            ChartName = Settings.ChartName,
             Os = ContainerOs.Windows,
         };
 

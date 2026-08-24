@@ -30,6 +30,17 @@ internal sealed class CliOptions
 
     public bool NoPipeline { get; private set; }
 
+    public bool NoHelm { get; private set; }
+
+    /// <summary>Helm chart name. Defaults to the solution name when not given.</summary>
+    public string? ChartName { get; private set; }
+
+    /// <summary>Kubernetes namespace the generated chart is deployed into.</summary>
+    public string Namespace { get; private set; } = "default";
+
+    /// <summary>Azure DevOps Kubernetes service connection used by the deploy stage.</summary>
+    public string KubernetesServiceConnection { get; private set; } = "aks-service-connection";
+
     public bool Verbose { get; private set; }
 
     public bool ShowHelp { get; private set; }
@@ -56,6 +67,11 @@ internal sealed class CliOptions
                                    Image repository prefix. Default: the solution name.
               --no-dockerfile      Do not generate Dockerfiles.
               --no-pipeline        Do not generate the Azure DevOps pipeline.
+              --chart-name <name>  Helm chart name. Default: the solution name.
+              --namespace <name>   Kubernetes namespace to deploy into. Default: default.
+              --kubernetes-connection <name>
+                                   Azure DevOps Kubernetes service connection. Default: aks-service-connection.
+              --no-helm            Do not generate the Helm chart.
           -f, --force              Overwrite files that already exist.
               --dry-run            Report what would be written without touching the disk.
           -l, --list               Only list the discovered projects.
@@ -148,6 +164,33 @@ internal sealed class CliOptions
                     break;
                 case "--no-pipeline":
                     options.NoPipeline = true;
+                    break;
+                case "--no-helm":
+                    options.NoHelm = true;
+                    break;
+                case "--chart-name":
+                    if (!TryReadValue(args, ref i, error, out var chartName))
+                    {
+                        return false;
+                    }
+
+                    options.ChartName = chartName;
+                    break;
+                case "--namespace":
+                    if (!TryReadValue(args, ref i, error, out var kubernetesNamespace))
+                    {
+                        return false;
+                    }
+
+                    options.Namespace = kubernetesNamespace;
+                    break;
+                case "--kubernetes-connection":
+                    if (!TryReadValue(args, ref i, error, out var kubernetesConnection))
+                    {
+                        return false;
+                    }
+
+                    options.KubernetesServiceConnection = kubernetesConnection;
                     break;
                 case "-f" or "--force":
                     options.Force = true;

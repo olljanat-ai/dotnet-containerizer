@@ -16,6 +16,8 @@ dotnet-containerize [path] [options]
 | `.dockerignore` | build context root | Keeps `bin`, `obj`, `.git` and friends out of the build context |
 | `azure-pipelines.yml` | repository root | Builds and pushes an image per project to Azure Container Registry |
 | `.azuredevops/templates/build-image.yml` | repository root | Job template used once per project by the pipeline |
+| `.azuredevops/templates/helm-deploy.yml` | repository root | Deployment job that runs `helm upgrade --install` |
+| `helm/<chart>/` | repository root | Helm chart that deploys every component of the solution |
 
 ## How projects are classified
 
@@ -41,7 +43,9 @@ in its own cached layer.
 `azure-pipelines.yml` builds one container image per containerizable project and pushes it to Azure
 Container Registry through the `Docker@2` task. Pull request builds only build the images, builds of the
 default branch build and push them tagged with `$(Build.BuildNumber)` and `latest`. When the solution
-contains test projects, a `dotnet test` job runs first and the image jobs depend on it.
+contains test projects, a `dotnet test` job runs first and the image jobs depend on it. A second stage
+deploys the Helm chart with `helm upgrade --install` through a Kubernetes service connection, using the
+tag that was just built.
 
 Before the first run, create a **Docker Registry** service connection in *Project settings -> Service
 connections* that points to your ACR, then set the pipeline variables:
@@ -51,9 +55,58 @@ connections* that points to your ACR, then set the pipeline variables:
 | `dockerRegistryServiceConnection` | Name of the Docker registry service connection | `--service-connection` |
 | `containerRegistry` | ACR login server, e.g. `contoso.azurecr.io` | `--registry` |
 | `imagePrefix` | Repository prefix, images become `<prefix>/<project>` | `--image-prefix` |
+| `kubernetesServiceConnection` | Kubernetes service connection used by the deploy stage | `--kubernetes-connection` |
+| `kubernetesNamespace` | Namespace the release is deployed into | `--namespace` |
 
 Paths inside the pipeline are relative to the repository root, so the pipeline keeps working when the
 solution lives in a subfolder of the repository.
+
+## The generated Helm chart
+
+The chart has one generic set of templates and a `components` map in `values.yaml` with one entry per
+project, so the whole solution is deployed by a single release:
+
+```
+helm/contoso
+├── Chart.yaml
+├── values.yaml
+└── templates
+    ├── _helpers.tpl
+    ├── deployment.yaml     # one Deployment per enabled component
+    ├── service.yaml        # one Service per component that listens on a port
+    ├── ingress.yaml        # one Ingress per component with ingress.enabled
+    ├── serviceaccount.yaml
+    └── NOTES.txt
+```
+
+ASP.NET Core projects get a container port, a `ClusterIP` service, `ASPNETCORE_HTTP_PORTS` and a
+disabled ingress and probe block to fill in. Worker and console projects get a Deployment only. Every
+component can be tuned on its own, and turned off with `enabled: false`:
+
+```yaml
+components:
+  contoso-api:
+    enabled: true
+    replicaCount: 2
+    containerPort: 8080
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+    probes:
+      enabled: false
+      path: /healthz
+```
+
+Images are assembled as `<image.registry>/<image.prefix>/<component.repository>:<tag>`, so the deploy
+stage of the pipeline only has to pass the tag it just built:
+
+```bash
+helm upgrade --install contoso helm/contoso   --namespace contoso --create-namespace   --set image.registry=contoso.azurecr.io   --set image.prefix=contoso   --set image.tag=20240521.3
+```
+
+Validate a generated chart with `helm lint helm/contoso` and `helm template contoso helm/contoso`.
 
 ## Options
 
@@ -67,6 +120,10 @@ solution lives in a subfolder of the repository.
 | `--image-prefix <name>` | Image repository prefix. Default: the solution name |
 | `--no-dockerfile` | Do not generate Dockerfiles |
 | `--no-pipeline` | Do not generate the Azure DevOps pipeline |
+| `--chart-name <name>` | Helm chart name. Default: the solution name |
+| `--namespace <name>` | Kubernetes namespace to deploy into. Default: `default` |
+| `--kubernetes-connection <name>` | Kubernetes service connection name. Default: `aks-service-connection` |
+| `--no-helm` | Do not generate the Helm chart |
 | `-f`, `--force` | Overwrite files that already exist |
 | `--dry-run` | Report what would be written without touching the disk |
 | `-l`, `--list` | Only list the discovered projects |
@@ -113,6 +170,16 @@ created    src/Contoso.Worker/Dockerfile
 created    .dockerignore
 created    azure-pipelines.yml
 created    .azuredevops/templates/build-image.yml
+created    .azuredevops/templates/helm-deploy.yml
+created    helm/contoso/Chart.yaml
+created    helm/contoso/values.yaml
+created    helm/contoso/.helmignore
+created    helm/contoso/templates/_helpers.tpl
+created    helm/contoso/templates/serviceaccount.yaml
+created    helm/contoso/templates/deployment.yaml
+created    helm/contoso/templates/service.yaml
+created    helm/contoso/templates/ingress.yaml
+created    helm/contoso/templates/NOTES.txt
 ```
 
 ## Continuous integration for this repository

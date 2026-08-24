@@ -64,6 +64,10 @@ internal static class Program
             Registry = options.Registry,
             ServiceConnection = options.ServiceConnection,
             ImagePrefix = options.ImagePrefix is { Length: > 0 } prefix ? prefix : Naming.ToKebabCase(scan.Name),
+            ChartName = options.ChartName is { Length: > 0 } chart ? chart : Naming.ToKebabCase(scan.Name),
+            KubernetesServiceConnection = options.KubernetesServiceConnection,
+            Namespace = options.Namespace,
+            IncludeHelm = !options.NoHelm,
             Os = options.Os,
         };
 
@@ -84,6 +88,14 @@ internal static class Program
         if (!options.NoPipeline)
         {
             foreach (var file in AzurePipelineGenerator.Generate(scan, settings))
+            {
+                skipped += Write(writer, file, scan);
+            }
+        }
+
+        if (!options.NoHelm)
+        {
+            foreach (var file in HelmChartGenerator.Generate(scan, settings))
             {
                 skipped += Write(writer, file, scan);
             }
