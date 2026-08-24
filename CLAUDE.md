@@ -39,3 +39,5 @@ NetworkPolicy template, which needs a CNI plugin that enforces policies.
 - Generated files are never overwritten without `--force`.
 - Cover new generated output with tests in `tests/DotnetContainerizer.Tests`, and validate chart changes
   with `helm lint` and `helm template` before committing.
+- Every push to `main` publishes release binaries through `.github/workflows/release.yml`, so main has to
+  stay releasable: the tool is published trimmed and self contained, and trim warnings are build errors.

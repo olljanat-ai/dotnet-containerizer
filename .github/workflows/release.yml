@@ -1,0 +1,144 @@
+# Builds Linux and Windows binaries on every push to main and publishes them as a GitHub release.
+# Actions are referenced by major version tag; pin them to commit SHAs if your org requires it.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Least privilege by default, only the release job is allowed to write.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  VERSION: 0.1.${{ github.run_number }}
+
+jobs:
+  validate:
+    name: Test and audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: dotnet test
+        run: dotnet test DotnetContainerizer.sln --configuration Release
+
+      - name: Audit NuGet packages for known vulnerabilities
+        run: |
+          set -euo pipefail
+          dotnet list DotnetContainerizer.sln package --vulnerable --include-transitive | tee audit.log
+          if grep -q 'has the following vulnerable packages' audit.log; then
+            echo 'Vulnerable NuGet packages found.'
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows binaries cross compile from the Linux agent, no Windows runner needed.
+        rid:
+          - linux-x64
+          - linux-arm64
+          - win-x64
+          - win-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish a self contained single file binary
+        run: |
+          dotnet publish src/DotnetContainerizer/DotnetContainerizer.csproj \
+            --configuration Release \
+            --runtime ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=true \
+            -p:DebugType=none \
+            -p:Version=$VERSION \
+            --output publish/${{ matrix.rid }}
+
+      - name: Package the binary
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp README.md LICENSE publish/${{ matrix.rid }}/
+          name="dotnet-containerize-$VERSION-${{ matrix.rid }}"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            (cd publish/${{ matrix.rid }} && zip -q -r "../../dist/$name.zip" .)
+          else
+            chmod +x publish/${{ matrix.rid }}/dotnet-containerize
+            tar -czf "dist/$name.tar.gz" -C publish/${{ matrix.rid }} .
+          fi
+          ls -l dist
+
+      - name: Check that the binary runs
+        # Only the binaries that match the agent can be executed here.
+        if: matrix.rid == 'linux-x64'
+        run: |
+          set -euo pipefail
+          publish/${{ matrix.rid }}/dotnet-containerize --version
+          test "$(publish/${{ matrix.rid }}/dotnet-containerize --version)" = "$VERSION"
+          publish/${{ matrix.rid }}/dotnet-containerize --path . --list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write the checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "dotnet-containerize $VERSION" \
+            --generate-notes

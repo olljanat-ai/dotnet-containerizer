@@ -155,6 +155,25 @@ Validate a generated chart with `helm lint helm/contoso` and `helm template cont
 
 Existing files are never overwritten without `--force`, so hand tuned Dockerfiles survive a re-run.
 
+## Download
+
+Every push to `main` publishes a GitHub release with self contained single file binaries, one per
+platform. They carry their own .NET runtime, so nothing has to be installed first:
+
+| Platform | Asset |
+| --- | --- |
+| Linux x64 | `dotnet-containerize-<version>-linux-x64.tar.gz` |
+| Linux arm64 | `dotnet-containerize-<version>-linux-arm64.tar.gz` |
+| Windows x64 | `dotnet-containerize-<version>-win-x64.zip` |
+| Windows arm64 | `dotnet-containerize-<version>-win-arm64.zip` |
+
+```bash
+tar -xzf dotnet-containerize-0.1.42-linux-x64.tar.gz
+./dotnet-containerize ./my-solution
+```
+
+Each release also carries `SHA256SUMS.txt`, verify a download with `sha256sum --check SHA256SUMS.txt`.
+
 ## Building and running
 
 ```bash
@@ -207,8 +226,12 @@ created    helm/contoso/templates/NOTES.txt
 
 ## Continuous integration for this repository
 
-`azure-pipelines.yml` in the repository root builds, tests and packs the tool itself. It is not the
-pipeline the tool generates, the generated one is described above.
+Neither of these is the pipeline the tool generates, the generated one is described above.
+
+- `.github/workflows/release.yml` runs the tests and the package audit on every push to `main`, builds
+  the four platform binaries, smoke tests the Linux one, and publishes them as release `v0.1.<run
+  number>` with checksums. Only the release job gets `contents: write`.
+- `azure-pipelines.yml` builds, tests, audits and packs the tool itself.
 
 ## License
 
